@@ -60,7 +60,7 @@ public final class WikiOpener {
 	 */
 	public static void closed(@Nullable WikiScreen screen, WikiRequest.@Nullable Page page) {
 		lastScreen = screen;
-		if (page != null) {
+		if (page != null && page.site() == null) {
 			WikiData.LastPage last = new WikiData.LastPage(IngameWiki.client().links().base(), page.title(), page.fragment());
 			if (!last.equals(IngameWiki.data().lastPage)) {
 				IngameWiki.data().lastPage = last;

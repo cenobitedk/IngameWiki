@@ -9,10 +9,12 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Converts between page titles and URLs of a MediaWiki site such as {@code https://minecraft.wiki}.
+ * Pages are {@code <base>/w/<title>}. The action API, when the site has one, is {@code <base>/api.php}.
  */
 public final class WikiLinks {
 	private final String base;
 	private final URI baseUri;
+	private volatile boolean staticSite;
 
 	/**
 	 * @param base site URL without trailing slash, e.g. {@code https://minecraft.wiki}
@@ -30,6 +32,17 @@ public final class WikiLinks {
 		return URI.create(base + "/api.php");
 	}
 
+	/**
+	 * Whether this site serves rendered pages and has no action API. Search links then open {@code /search/?q=}.
+	 */
+	public boolean staticSite() {
+		return staticSite;
+	}
+
+	public void staticSite(boolean staticSite) {
+		this.staticSite = staticSite;
+	}
+
 	public URI page(String title, @Nullable String fragment) {
 		String url = base + "/w/" + encodeTitle(title);
 		if (fragment != null && !fragment.isEmpty()) {
@@ -42,6 +55,9 @@ public final class WikiLinks {
 	 * A URL that shows the page called {@code query} if it exists, and search results otherwise.
 	 */
 	public URI search(String query) {
+		if (staticSite) {
+			return URI.create(base + "/search/?q=" + encode(query));
+		}
 		return URI.create(base + "/index.php?title=Special:Search&go=Go&search=" + encode(query));
 	}
 
@@ -74,6 +90,13 @@ public final class WikiLinks {
 			return null;
 		}
 		if (!sameSite(uri)) {
+			// An article on another wiki (for example a Matcha page linking to minecraft.wiki/w/Spruce_Wood) is
+			// opened from that wiki, still in-game. Anything else stays an external link.
+			ForeignArticle foreign = foreignArticle(uri);
+			if (foreign != null) {
+				String fragment = uri.getRawFragment() == null ? null : normalizeFragment(uri.getRawFragment());
+				return new Target.Page(foreign.title(), fragment, foreign.site());
+			}
 			return uri.getScheme().startsWith("http") ? new Target.External(uri) : null;
 		}
 		String title = title(uri);
@@ -137,6 +160,46 @@ public final class WikiLinks {
 	}
 
 	/**
+	 * An article URL on a site other than this one: {@code /w/<title>} or {@code /wiki/<title>}.
+	 */
+	private static @Nullable ForeignArticle foreignArticle(URI uri) {
+		String host = uri.getHost();
+		String scheme = uri.getScheme();
+		if (host == null || scheme == null || !scheme.startsWith("http")) {
+			return null;
+		}
+		String path = uri.getRawPath() == null ? "" : uri.getRawPath();
+		String title = null;
+		if (path.startsWith("/w/") && path.length() > 3) {
+			title = decode(path.substring(3));
+		} else if (path.startsWith("/wiki/") && path.length() > 6) {
+			title = decode(path.substring(6));
+		}
+		if (title == null || title.isBlank()) {
+			return null;
+		}
+		title = title.replace('_', ' ').strip();
+		if (title.isBlank() || title.regionMatches(true, 0, "Special:", 0, 8)) {
+			return null;
+		}
+		return new ForeignArticle(origin(uri), title);
+	}
+
+	private static String origin(URI uri) {
+		String host = uri.getHost();
+		if (host.indexOf(':') >= 0) {
+			host = "[" + host + "]";
+		}
+		String scheme = uri.getScheme();
+		int port = uri.getPort();
+		boolean defaultPort = port < 0 || (port == 443 && "https".equalsIgnoreCase(scheme)) || (port == 80 && "http".equalsIgnoreCase(scheme));
+		return defaultPort ? scheme + "://" + host : scheme + "://" + host + ":" + port;
+	}
+
+	private record ForeignArticle(String site, String title) {
+	}
+
+	/**
 	 * Anchors on MediaWiki pages use underscores for spaces and are percent-decoded in the DOM.
 	 */
 	public static String normalizeFragment(String fragment) {
@@ -186,9 +249,13 @@ public final class WikiLinks {
 	 */
 	public sealed interface Target {
 		/**
-		 * A page of the configured wiki.
+		 * An article. {@code site} is {@code null} when the article belongs to this {@link WikiLinks}, and the other
+		 * wiki's base URL when the link points at an article there.
 		 */
-		record Page(String title, @Nullable String fragment) implements Target {
+		record Page(String title, @Nullable String fragment, @Nullable String site) implements Target {
+			public Page(String title, @Nullable String fragment) {
+				this(title, fragment, null);
+			}
 		}
 
 		/**

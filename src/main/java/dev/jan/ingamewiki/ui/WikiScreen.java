@@ -215,15 +215,14 @@ public final class WikiScreen extends Screen {
 		search.setHint(Component.translatable("ingamewiki.search").withStyle(EditBox.SEARCH_HINT_STYLE));
 		if (previous != null) {
 			search.setValue(previous);
-		} else if (page != null) {
-			search.setValue(page.displayTitle());
 		}
 		updateButtons();
 
 		if (!started) {
 			started = true;
 			load(current, false);
-		} else if (page != null && (!page.base().equals(IngameWiki.client().links().base()))) {
+		} else if (page != null && current.request instanceof WikiRequest.Page p && p.site() == null
+				&& !page.base().equals(IngameWiki.client().links().base())) {
 			reload();
 		} else {
 			relayout();
@@ -331,9 +330,8 @@ public final class WikiScreen extends Screen {
 	}
 
 	private void openCurrentIn(OpenMode mode) {
-		WikiRequest request = page != null && page.title() != null
-				? new WikiRequest.Page(page.title(), currentSection())
-				: current.request;
+		WikiRequest.Page shown = shownPage();
+		WikiRequest request = shown != null ? shown : current.request;
 		if (mode == OpenMode.MCEF) {
 			McefSupport.open(parent, request.webUrl(IngameWiki.client().links()));
 		} else {
@@ -392,7 +390,7 @@ public final class WikiScreen extends Screen {
 		synchronized (CACHE) {
 			cached = bypassCache ? null : CACHE.get(entry.request);
 		}
-		if (cached != null && cached.base().equals(IngameWiki.client().links().base())) {
+		if (cached != null && cached.base().equals(expectedBase(entry.request))) {
 			show(entry, cached);
 			return;
 		}
@@ -437,10 +435,6 @@ public final class WikiScreen extends Screen {
 			}
 		}
 		tocScroll = 0;
-		if (search != null && !search.isFocused()) {
-			search.setValue(loaded.displayTitle());
-			search.moveCursorToStart(false);
-		}
 		updateButtons();
 	}
 
@@ -448,11 +442,28 @@ public final class WikiScreen extends Screen {
 		WikiClient client = IngameWiki.client();
 		WikiLinks links = client.links();
 		return switch (request) {
-			case WikiRequest.Page p -> client.page(p.title())
-					.thenApply(result -> article(result, links))
-					.exceptionallyCompose(error -> WikiClient.unwrap(error) instanceof WikiException.Missing
-							? client.search(p.title(), 20).thenApply(results -> searchPage(results, p.title(), links))
-							: CompletableFuture.failedFuture(error));
+			case WikiRequest.Page p -> {
+				boolean remote = p.site() != null && !p.site().equals(links.base());
+				WikiLinks view = remote ? new WikiLinks(p.site()) : links;
+				CompletableFuture<WikiPage> loading = remote ? client.pageOn(view, p.title()) : client.page(p.title());
+				yield loading.thenApply(result -> article(result, view))
+						.exceptionallyCompose(error -> {
+							if (!(WikiClient.unwrap(error) instanceof WikiException.Missing)) {
+								return CompletableFuture.failedFuture(error);
+							}
+							if (remote) {
+								return client.searchOn(view, p.title(), 20)
+										.thenApply(results -> searchPage(results, p.title(), view));
+							}
+							boolean home = p.title().equalsIgnoreCase(IngameWiki.config().homePage);
+							return client.search(p.title(), 20).thenCompose(results -> {
+								if (results.hits().isEmpty() && home && links.staticSite()) {
+									return client.frontPage().thenApply(result -> article(result, links));
+								}
+								return CompletableFuture.completedFuture(searchPage(results, p.title(), links));
+							});
+						});
+			}
 			case WikiRequest.Lookup l -> client.lookup(l.query())
 					.thenApply(result -> article(result, links))
 					.exceptionallyCompose(error -> WikiClient.unwrap(error) instanceof WikiException.Missing
@@ -496,7 +507,7 @@ public final class WikiScreen extends Screen {
 		} else {
 			html.append("<ul>");
 			for (SearchHit hit : results.hits()) {
-				html.append("<li><a href=\"").append(Entities.escape(links.page(hit.title(), null).toString())).append("\"><b>")
+				html.append("<li><a href=\"").append(Entities.escape(links.page(hit.title(), hit.fragment()).toString())).append("\"><b>")
 						.append(Entities.escape(hit.title())).append("</b></a>");
 				if (!hit.snippet().isBlank()) {
 					html.append("<br><small>").append(hit.snippet()).append("</small>");
@@ -539,7 +550,7 @@ public final class WikiScreen extends Screen {
 			return;
 		}
 		ModConfig config = IngameWiki.config();
-		LayoutOptions options = new LayoutOptions(config.showImages, config.imageScale, IngameWiki.client().links());
+		LayoutOptions options = new LayoutOptions(config.showImages, config.imageScale, linksFor(page));
 		float newZoom = config.zoom;
 		if (layout != null && zoom == newZoom && layout.width() == layoutWidth(newZoom) && options.equals(layoutOptions)) {
 			return;
@@ -600,23 +611,50 @@ public final class WikiScreen extends Screen {
 			reload();
 			return;
 		}
-		WikiLinks links = IngameWiki.client().links();
+		WikiLinks links = page == null ? IngameWiki.client().links() : linksFor(page);
 		WikiLinks.Target target = links.parse(href);
 		switch (target) {
 			case null -> {
 			}
 			case WikiLinks.Target.Anchor a -> scrollTo(a.fragment());
 			case WikiLinks.Target.Page p -> {
+				String site = p.site() != null ? p.site() : links.base().equals(IngameWiki.client().links().base()) ? null : links.base();
+				WikiRequest.Page next = new WikiRequest.Page(p.title(), p.fragment(), site);
 				if (external) {
-					WikiOpener.openIn(OpenMode.BROWSER, new WikiRequest.Page(p.title(), p.fragment()), this);
-				} else if (page != null && page.title() != null && page.title().equalsIgnoreCase(p.title()) && p.fragment() != null) {
+					WikiOpener.openIn(OpenMode.BROWSER, next, this);
+				} else if (page != null && page.title() != null && page.title().equalsIgnoreCase(p.title()) && p.fragment() != null
+						&& page.base().equals(site == null ? IngameWiki.client().links().base() : site)) {
 					scrollTo(p.fragment());
 				} else {
-					navigate(new WikiRequest.Page(p.title(), p.fragment()));
+					navigate(next);
 				}
 			}
 			case WikiLinks.Target.External e -> WikiOpener.openExternal(this, e.uri());
 		}
+	}
+
+	/**
+	 * The article on screen, including the other wiki when it was not loaded from the configured one.
+	 */
+	private WikiRequest.@Nullable Page shownPage() {
+		if (page == null || page.title() == null) {
+			return null;
+		}
+		String configured = IngameWiki.client().links().base();
+		String site = page.base().equals(configured) ? null : page.base();
+		return new WikiRequest.Page(page.title(), currentSection(), site);
+	}
+
+	/**
+	 * Links and images on the open page resolve against the wiki that page came from.
+	 */
+	private static WikiLinks linksFor(Loaded loaded) {
+		WikiLinks configured = IngameWiki.client().links();
+		return loaded.base().equals(configured.base()) ? configured : new WikiLinks(loaded.base());
+	}
+
+	private static String expectedBase(WikiRequest request) {
+		return request instanceof WikiRequest.Page p && p.site() != null ? p.site() : IngameWiki.client().links().base();
 	}
 
 	// ---------------------------------------------------------------- rendering
@@ -945,7 +983,7 @@ public final class WikiScreen extends Screen {
 	@Override
 	public void removed() {
 		// Also runs when a child screen such as the settings opens; that just records the same page early.
-		WikiRequest.Page shown = page != null && page.title() != null ? new WikiRequest.Page(page.title(), currentSection()) : null;
+		WikiRequest.Page shown = shownPage();
 		// A screen opened from an inventory would return to that inventory, so only reuse screens without a parent.
 		WikiOpener.closed(parent == null ? this : null, shown);
 	}

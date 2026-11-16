@@ -16,14 +16,19 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Talks to the MediaWiki action API of the configured wiki.
+ * Reads pages from the configured wiki. A MediaWiki action API is used when {@code <wiki>/api.php} answers; otherwise
+ * pages are read from the static {@code /w/<title>} HTML and search uses {@code /_static/search-titles.json}.
  */
 public final class WikiClient {
+	private static final Logger LOGGER = LoggerFactory.getLogger(WikiClient.class);
 	private static final Duration TIMEOUT = Duration.ofSeconds(20);
 
 	private final HttpClient http = HttpClient.newBuilder()
@@ -31,7 +36,10 @@ public final class WikiClient {
 			.connectTimeout(Duration.ofSeconds(10))
 			.build();
 	private final String userAgent;
+	private final Object state = new Object();
 	private volatile WikiLinks links;
+	private volatile boolean staticSite;
+	private @Nullable CompletableFuture<TitleIndex> titles;
 
 	public WikiClient(String userAgent, WikiLinks links) {
 		this.userAgent = userAgent;
@@ -43,7 +51,11 @@ public final class WikiClient {
 	}
 
 	public void setLinks(WikiLinks links) {
-		this.links = links;
+		synchronized (state) {
+			this.staticSite = false;
+			this.titles = null;
+			this.links = links;
+		}
 	}
 
 	/**
@@ -52,6 +64,109 @@ public final class WikiClient {
 	 * @throws WikiException.Missing (wrapped) if the page does not exist
 	 */
 	public CompletableFuture<WikiPage> page(String title) {
+		if (staticSite) {
+			return staticPage(links, title);
+		}
+		WikiLinks site = links;
+		return apiPage(site, title, true).exceptionallyCompose(error -> {
+			if (!(unwrap(error) instanceof NoApi)) {
+				return CompletableFuture.failedFuture(error);
+			}
+			useStatic(site);
+			if (links != site) {
+				return CompletableFuture.failedFuture(error);
+			}
+			return staticPage(site, title);
+		});
+	}
+
+	/**
+	 * Fetches a page from another wiki. The configured site, and whether it is static, stay as they are.
+	 */
+	public CompletableFuture<WikiPage> pageOn(WikiLinks site, String title) {
+		return apiPage(site, title, false).exceptionallyCompose(error -> {
+			if (!(unwrap(error) instanceof NoApi)) {
+				return CompletableFuture.failedFuture(error);
+			}
+			return staticPage(site, title);
+		});
+	}
+
+	/**
+	 * Searches another wiki through its API. A site with no API yields no hits.
+	 */
+	public CompletableFuture<SearchResults> searchOn(WikiLinks site, String query, int limit) {
+		return apiSearch(site, query, limit, false).exceptionallyCompose(error -> {
+			if (unwrap(error) instanceof NoApi) {
+				return CompletableFuture.completedFuture(new SearchResults(query, List.of(), null));
+			}
+			return CompletableFuture.failedFuture(error);
+		});
+	}
+
+	/**
+	 * Full-text search on a MediaWiki site, or title and alias search on a static one.
+	 */
+	public CompletableFuture<SearchResults> search(String query, int limit) {
+		if (staticSite) {
+			return staticSearch(query, limit);
+		}
+		WikiLinks site = links;
+		return apiSearch(site, query, limit, true).exceptionallyCompose(error -> {
+			if (!(unwrap(error) instanceof NoApi)) {
+				return CompletableFuture.failedFuture(error);
+			}
+			useStatic(site);
+			if (links != site) {
+				return CompletableFuture.failedFuture(error);
+			}
+			return staticSearch(query, limit);
+		});
+	}
+
+	/**
+	 * Loads the page called {@code query}, or, if there is none, the best search match.
+	 */
+	public CompletableFuture<WikiPage> lookup(String query) {
+		return page(query).exceptionallyCompose(error -> {
+			if (!(unwrap(error) instanceof WikiException.Missing)) {
+				return CompletableFuture.failedFuture(error);
+			}
+			return search(query, 1).thenCompose(results -> {
+				if (!results.hits().isEmpty()) {
+					return open(results.hits().getFirst());
+				}
+				if (results.suggestion() != null && !results.suggestion().equalsIgnoreCase(query)) {
+					return search(results.suggestion(), 1).thenCompose(suggested -> suggested.hits().isEmpty()
+							? CompletableFuture.failedFuture(new WikiException.Missing(query))
+							: open(suggested.hits().getFirst()));
+				}
+				return CompletableFuture.failedFuture(new WikiException.Missing(query));
+			});
+		});
+	}
+
+	public CompletableFuture<byte[]> bytes(URI uri) {
+		HttpRequest request = HttpRequest.newBuilder(uri)
+				.timeout(TIMEOUT)
+				.header("User-Agent", userAgent)
+				.GET()
+				.build();
+		return http.sendAsync(request, HttpResponse.BodyHandlers.ofByteArray()).thenApply(response -> {
+			if (response.statusCode() != 200) {
+				throw new WikiException("HTTP " + response.statusCode() + " for " + uri);
+			}
+			return response.body();
+		});
+	}
+
+	private CompletableFuture<WikiPage> open(SearchHit hit) {
+		return page(hit.title()).thenApply(found -> hit.fragment() == null
+				? found
+				: new WikiPage(found.title(), found.displayTitle(), found.html(), hit.fragment()));
+	}
+
+	private CompletableFuture<WikiPage> apiPage(WikiLinks site, String title, boolean own) {
 		Map<String, String> params = new LinkedHashMap<>();
 		params.put("action", "parse");
 		params.put("page", title);
@@ -60,7 +175,7 @@ public final class WikiClient {
 		params.put("disableeditsection", "1");
 		params.put("disablelimitreport", "1");
 		params.put("disabletoc", "1");
-		return api(params).thenApply(json -> {
+		return api(site, params, own).thenApply(json -> {
 			JsonObject error = object(json, "error");
 			if (error != null) {
 				if ("missingtitle".equals(string(error, "code")) || "invalidtitle".equals(string(error, "code"))) {
@@ -87,10 +202,7 @@ public final class WikiClient {
 		});
 	}
 
-	/**
-	 * Full-text search.
-	 */
-	public CompletableFuture<SearchResults> search(String query, int limit) {
+	private CompletableFuture<SearchResults> apiSearch(WikiLinks site, String query, int limit, boolean own) {
 		Map<String, String> params = new LinkedHashMap<>();
 		params.put("action", "query");
 		params.put("list", "search");
@@ -98,7 +210,7 @@ public final class WikiClient {
 		params.put("srlimit", Integer.toString(limit));
 		params.put("srprop", "snippet");
 		params.put("srnamespace", "0");
-		return api(params).thenApply(json -> {
+		return api(site, params, own).thenApply(json -> {
 			JsonObject q = object(json, "query");
 			List<SearchHit> hits = new ArrayList<>();
 			String suggestion = null;
@@ -122,54 +234,86 @@ public final class WikiClient {
 	}
 
 	/**
-	 * Loads the page called {@code query}, or, if there is none, the best full-text search match.
+	 * The site's front page, {@code <wikiUrl>/}. Used when a static wiki has no page with the configured main-page title.
 	 */
-	public CompletableFuture<WikiPage> lookup(String query) {
-		return page(query).exceptionallyCompose(error -> {
-			if (!(unwrap(error) instanceof WikiException.Missing)) {
-				return CompletableFuture.failedFuture(error);
+	public CompletableFuture<WikiPage> frontPage() {
+		WikiLinks site = links;
+		URI uri = URI.create(site.base() + "/");
+		return send(uri, "text/html").thenApply(response -> {
+			if (response.statusCode() != 200) {
+				throw new WikiException("HTTP " + response.statusCode());
 			}
-			return search(query, 1).thenCompose(results -> {
-				if (!results.hits().isEmpty()) {
-					return page(results.hits().getFirst().title());
-				}
-				if (results.suggestion() != null && !results.suggestion().equalsIgnoreCase(query)) {
-					return search(results.suggestion(), 1).thenCompose(suggested -> suggested.hits().isEmpty()
-							? CompletableFuture.failedFuture(new WikiException.Missing(query))
-							: page(suggested.hits().getFirst().title()));
-				}
-				return CompletableFuture.failedFuture(new WikiException.Missing(query));
-			});
+			return StaticPages.parse(response.body(), site.base(), site.title(response.uri()), redirectFragment(response));
 		});
 	}
 
-	public CompletableFuture<byte[]> bytes(URI uri) {
-		HttpRequest request = HttpRequest.newBuilder(uri)
-				.timeout(TIMEOUT)
-				.header("User-Agent", userAgent)
-				.GET()
-				.build();
-		return http.sendAsync(request, HttpResponse.BodyHandlers.ofByteArray()).thenApply(response -> {
+	private CompletableFuture<WikiPage> staticPage(WikiLinks site, String title) {
+		URI uri = site.page(title, null);
+		return send(uri, "text/html").thenApply(response -> {
+			if (response.statusCode() == 404) {
+				throw new WikiException.Missing(title);
+			}
 			if (response.statusCode() != 200) {
 				throw new WikiException("HTTP " + response.statusCode() + " for " + uri);
 			}
-			return response.body();
+			return StaticPages.parse(response.body(), title, site.title(response.uri()), redirectFragment(response));
 		});
 	}
 
-	private CompletableFuture<JsonObject> api(Map<String, String> params) {
+	private CompletableFuture<SearchResults> staticSearch(String query, int limit) {
+		return titleIndex().thenApply(index -> new SearchResults(query, index.search(query, limit), null));
+	}
+
+	private CompletableFuture<TitleIndex> titleIndex() {
+		synchronized (state) {
+			if (titles != null) {
+				return titles;
+			}
+			WikiLinks site = links;
+			URI uri = URI.create(site.base() + "/_static/search-titles.json");
+			CompletableFuture<TitleIndex> loading = new CompletableFuture<>();
+			titles = loading;
+			send(uri, "application/json").whenComplete((response, error) -> {
+				if (error != null) {
+					synchronized (state) {
+						if (titles == loading) {
+							titles = null;
+						}
+					}
+					loading.completeExceptionally(error);
+					return;
+				}
+				try {
+					String body = response.body().stripLeading();
+					loading.complete(response.statusCode() == 200 && body.startsWith("[")
+							? TitleIndex.parse(body)
+							: TitleIndex.empty());
+				} catch (RuntimeException e) {
+					synchronized (state) {
+						if (titles == loading) {
+							titles = null;
+						}
+					}
+					loading.completeExceptionally(e);
+				}
+			});
+			return loading;
+		}
+	}
+
+	private CompletableFuture<JsonObject> api(WikiLinks site, Map<String, String> params, boolean own) {
 		StringBuilder query = new StringBuilder("format=json&formatversion=2&maxlag=5");
 		for (Map.Entry<String, String> e : params.entrySet()) {
 			query.append('&').append(e.getKey()).append('=').append(URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8));
 		}
-		URI uri = URI.create(links.api() + "?" + query);
-		HttpRequest request = HttpRequest.newBuilder(uri)
-				.timeout(TIMEOUT)
-				.header("User-Agent", userAgent)
-				.header("Accept", "application/json")
-				.GET()
-				.build();
-		return http.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)).thenApply(response -> {
+		URI uri = URI.create(site.api() + "?" + query);
+		return send(uri, "application/json").thenApply(response -> {
+			if (response.statusCode() == 404 || response.statusCode() == 405 || looksLikeHtml(response)) {
+				if (own) {
+					useStatic(site);
+				}
+				throw new NoApi();
+			}
 			if (response.statusCode() != 200) {
 				throw new WikiException("HTTP " + response.statusCode());
 			}
@@ -179,6 +323,64 @@ public final class WikiClient {
 				throw new WikiException("Invalid response", e);
 			}
 		});
+	}
+
+	private CompletableFuture<HttpResponse<String>> send(URI uri, String accept) {
+		HttpRequest request = HttpRequest.newBuilder(uri)
+				.timeout(TIMEOUT)
+				.header("User-Agent", userAgent)
+				.header("Accept", accept)
+				.GET()
+				.build();
+		return http.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+	}
+
+	private void useStatic(WikiLinks site) {
+		synchronized (state) {
+			if (links != site) {
+				return;
+			}
+			boolean already = staticSite;
+			staticSite = true;
+			site.staticSite(true);
+			if (!already) {
+				LOGGER.info("No MediaWiki API at {}, reading static pages", site.base());
+			}
+		}
+	}
+
+	private static boolean looksLikeHtml(HttpResponse<String> response) {
+		if (response.statusCode() != 200) {
+			return false;
+		}
+		String body = response.body().stripLeading();
+		return body.startsWith("<");
+	}
+
+	/**
+	 * Section named by the nearest redirect that carried a fragment. Clients drop fragments from the followed request,
+	 * but the {@code Location} header still has one.
+	 */
+	private static @Nullable String redirectFragment(HttpResponse<?> response) {
+		for (HttpResponse<?> hop = previous(response); hop != null; hop = previous(hop)) {
+			Optional<String> location = hop.headers().firstValue("location");
+			if (location.isEmpty()) {
+				continue;
+			}
+			int hash = location.get().indexOf('#');
+			if (hash < 0) {
+				continue;
+			}
+			String raw = location.get().substring(hash + 1);
+			return raw.isEmpty() ? null : WikiLinks.normalizeFragment(raw);
+		}
+		return null;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static @Nullable HttpResponse<?> previous(HttpResponse<?> response) {
+		Optional<? extends HttpResponse<?>> previous = (Optional<? extends HttpResponse<?>>) (Optional<?>) response.previousResponse();
+		return previous.orElse(null);
 	}
 
 	public static Throwable unwrap(Throwable error) {
@@ -201,5 +403,14 @@ public final class WikiClient {
 
 	private static String stripTags(String html) {
 		return org.jsoup.Jsoup.parse(html).text();
+	}
+
+	/**
+	 * {@code api.php} did not answer as a MediaWiki API. Callers fall back to static pages.
+	 */
+	private static final class NoApi extends WikiException {
+		private NoApi() {
+			super("No MediaWiki API");
+		}
 	}
 }
