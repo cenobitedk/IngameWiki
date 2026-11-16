@@ -15,6 +15,8 @@ the game. Pages can be shown three ways; you can switch between them at any time
 - **/wiki** opens the main page; **/wiki &lt;name&gt;** opens that page, or the best search match.
 - "Open Wiki" key (unbound by default): reopens the wiki where you last closed it (in-game, with its back/forward
   history and scroll position), or the main page the first time. The last page is remembered across restarts.
+- A book button in the icon row on the title screen and the pause menu (the same row as Mod Menu's button). It opens
+  the last wiki page, or the main page, and closing it returns to that menu.
 
 Items, blocks and entities are looked up by their English name, since the wiki uses English titles whatever the game
 language is.
