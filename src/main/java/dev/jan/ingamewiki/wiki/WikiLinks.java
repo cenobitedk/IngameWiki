@@ -9,10 +9,12 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Converts between page titles and URLs of a MediaWiki site such as {@code https://minecraft.wiki}.
+ * Pages are {@code <base>/w/<title>}. The action API, when the site has one, is {@code <base>/api.php}.
  */
 public final class WikiLinks {
 	private final String base;
 	private final URI baseUri;
+	private volatile boolean staticSite;
 
 	/**
 	 * @param base site URL without trailing slash, e.g. {@code https://minecraft.wiki}
@@ -30,6 +32,17 @@ public final class WikiLinks {
 		return URI.create(base + "/api.php");
 	}
 
+	/**
+	 * Whether this site serves rendered pages and has no action API. Search links then open {@code /search/?q=}.
+	 */
+	public boolean staticSite() {
+		return staticSite;
+	}
+
+	public void staticSite(boolean staticSite) {
+		this.staticSite = staticSite;
+	}
+
 	public URI page(String title, @Nullable String fragment) {
 		String url = base + "/w/" + encodeTitle(title);
 		if (fragment != null && !fragment.isEmpty()) {
@@ -42,6 +55,9 @@ public final class WikiLinks {
 	 * A URL that shows the page called {@code query} if it exists, and search results otherwise.
 	 */
 	public URI search(String query) {
+		if (staticSite) {
+			return URI.create(base + "/search/?q=" + encode(query));
+		}
 		return URI.create(base + "/index.php?title=Special:Search&go=Go&search=" + encode(query));
 	}
 

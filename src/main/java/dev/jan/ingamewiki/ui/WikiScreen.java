@@ -496,7 +496,7 @@ public final class WikiScreen extends Screen {
 		} else {
 			html.append("<ul>");
 			for (SearchHit hit : results.hits()) {
-				html.append("<li><a href=\"").append(Entities.escape(links.page(hit.title(), null).toString())).append("\"><b>")
+				html.append("<li><a href=\"").append(Entities.escape(links.page(hit.title(), hit.fragment()).toString())).append("\"><b>")
 						.append(Entities.escape(hit.title())).append("</b></a>");
 				if (!hit.snippet().isBlank()) {
 					html.append("<br><small>").append(hit.snippet()).append("</small>");

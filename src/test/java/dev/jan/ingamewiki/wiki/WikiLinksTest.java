@@ -69,6 +69,15 @@ class WikiLinksTest {
 	}
 
 	@Test
+	void staticSiteSearchUsesTheSearchPage() {
+		WikiLinks matcha = new WikiLinks("https://matchaflavou.red");
+		assertEquals("https://matchaflavou.red/index.php?title=Special:Search&go=Go&search=Fishing%20Rod",
+				matcha.search("Fishing Rod").toString());
+		matcha.staticSite(true);
+		assertEquals("https://matchaflavou.red/search/?q=Fishing%20Rod", matcha.search("Fishing Rod").toString());
+	}
+
+	@Test
 	void subdirectoryWikis() {
 		WikiLinks sub = new WikiLinks("https://example.org/wiki");
 		assertEquals("https://example.org/wiki/w/Stone", sub.page("Stone", null).toString());
