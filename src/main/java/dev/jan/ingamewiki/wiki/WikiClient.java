@@ -65,10 +65,10 @@ public final class WikiClient {
 	 */
 	public CompletableFuture<WikiPage> page(String title) {
 		if (staticSite) {
-			return staticPage(title);
+			return staticPage(links, title);
 		}
 		WikiLinks site = links;
-		return apiPage(title).exceptionallyCompose(error -> {
+		return apiPage(site, title, true).exceptionallyCompose(error -> {
 			if (!(unwrap(error) instanceof NoApi)) {
 				return CompletableFuture.failedFuture(error);
 			}
@@ -76,7 +76,31 @@ public final class WikiClient {
 			if (links != site) {
 				return CompletableFuture.failedFuture(error);
 			}
-			return staticPage(title);
+			return staticPage(site, title);
+		});
+	}
+
+	/**
+	 * Fetches a page from another wiki. The configured site, and whether it is static, stay as they are.
+	 */
+	public CompletableFuture<WikiPage> pageOn(WikiLinks site, String title) {
+		return apiPage(site, title, false).exceptionallyCompose(error -> {
+			if (!(unwrap(error) instanceof NoApi)) {
+				return CompletableFuture.failedFuture(error);
+			}
+			return staticPage(site, title);
+		});
+	}
+
+	/**
+	 * Searches another wiki through its API. A site with no API yields no hits.
+	 */
+	public CompletableFuture<SearchResults> searchOn(WikiLinks site, String query, int limit) {
+		return apiSearch(site, query, limit, false).exceptionallyCompose(error -> {
+			if (unwrap(error) instanceof NoApi) {
+				return CompletableFuture.completedFuture(new SearchResults(query, List.of(), null));
+			}
+			return CompletableFuture.failedFuture(error);
 		});
 	}
 
@@ -88,7 +112,7 @@ public final class WikiClient {
 			return staticSearch(query, limit);
 		}
 		WikiLinks site = links;
-		return apiSearch(query, limit).exceptionallyCompose(error -> {
+		return apiSearch(site, query, limit, true).exceptionallyCompose(error -> {
 			if (!(unwrap(error) instanceof NoApi)) {
 				return CompletableFuture.failedFuture(error);
 			}
@@ -142,7 +166,7 @@ public final class WikiClient {
 				: new WikiPage(found.title(), found.displayTitle(), found.html(), hit.fragment()));
 	}
 
-	private CompletableFuture<WikiPage> apiPage(String title) {
+	private CompletableFuture<WikiPage> apiPage(WikiLinks site, String title, boolean own) {
 		Map<String, String> params = new LinkedHashMap<>();
 		params.put("action", "parse");
 		params.put("page", title);
@@ -151,7 +175,7 @@ public final class WikiClient {
 		params.put("disableeditsection", "1");
 		params.put("disablelimitreport", "1");
 		params.put("disabletoc", "1");
-		return api(params).thenApply(json -> {
+		return api(site, params, own).thenApply(json -> {
 			JsonObject error = object(json, "error");
 			if (error != null) {
 				if ("missingtitle".equals(string(error, "code")) || "invalidtitle".equals(string(error, "code"))) {
@@ -178,7 +202,7 @@ public final class WikiClient {
 		});
 	}
 
-	private CompletableFuture<SearchResults> apiSearch(String query, int limit) {
+	private CompletableFuture<SearchResults> apiSearch(WikiLinks site, String query, int limit, boolean own) {
 		Map<String, String> params = new LinkedHashMap<>();
 		params.put("action", "query");
 		params.put("list", "search");
@@ -186,7 +210,7 @@ public final class WikiClient {
 		params.put("srlimit", Integer.toString(limit));
 		params.put("srprop", "snippet");
 		params.put("srnamespace", "0");
-		return api(params).thenApply(json -> {
+		return api(site, params, own).thenApply(json -> {
 			JsonObject q = object(json, "query");
 			List<SearchHit> hits = new ArrayList<>();
 			String suggestion = null;
@@ -223,8 +247,7 @@ public final class WikiClient {
 		});
 	}
 
-	private CompletableFuture<WikiPage> staticPage(String title) {
-		WikiLinks site = links;
+	private CompletableFuture<WikiPage> staticPage(WikiLinks site, String title) {
 		URI uri = site.page(title, null);
 		return send(uri, "text/html").thenApply(response -> {
 			if (response.statusCode() == 404) {
@@ -278,16 +301,17 @@ public final class WikiClient {
 		}
 	}
 
-	private CompletableFuture<JsonObject> api(Map<String, String> params) {
+	private CompletableFuture<JsonObject> api(WikiLinks site, Map<String, String> params, boolean own) {
 		StringBuilder query = new StringBuilder("format=json&formatversion=2&maxlag=5");
 		for (Map.Entry<String, String> e : params.entrySet()) {
 			query.append('&').append(e.getKey()).append('=').append(URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8));
 		}
-		WikiLinks site = links;
 		URI uri = URI.create(site.api() + "?" + query);
 		return send(uri, "application/json").thenApply(response -> {
 			if (response.statusCode() == 404 || response.statusCode() == 405 || looksLikeHtml(response)) {
-				useStatic(site);
+				if (own) {
+					useStatic(site);
+				}
 				throw new NoApi();
 			}
 			if (response.statusCode() != 200) {

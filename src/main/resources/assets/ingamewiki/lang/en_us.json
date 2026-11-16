@@ -58,6 +58,6 @@
 	"ingamewiki.config.imageScale.tooltip": "Size of wiki images relative to their size on the website, in GUI pixels.",
 	"ingamewiki.config.confirmLinks": "Confirm external links: %s",
 	"ingamewiki.config.wikiUrl": "Wiki URL",
-	"ingamewiki.config.wikiUrl.tooltip": "Base URL of a MediaWiki site, e.g. https://minecraft.wiki. A static export with pages at /w/<title> also works, e.g. https://matchaflavou.red",
+	"ingamewiki.config.wikiUrl.tooltip": "Base URL of a MediaWiki site, e.g. https://minecraft.wiki. A static export with pages at /w/<title> also works, e.g. https://matchaflavou.red. Article links to another wiki open in-game",
 	"ingamewiki.config.homePage": "Main page title"
 }

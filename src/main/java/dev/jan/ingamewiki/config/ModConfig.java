@@ -26,7 +26,7 @@ public final class ModConfig {
 	/**
 	 * Base URL of the wiki. A MediaWiki site is read through {@code <wikiUrl>/api.php}, with pages at
 	 * {@code <wikiUrl>/w/<title>}. If there is no API, pages are read from {@code /w/<title>} and search uses
-	 * {@code /_static/search-titles.json} when that file exists.
+	 * {@code /_static/search-titles.json} when that file exists. Article links to another wiki open that wiki in-game.
 	 */
 	public String wikiUrl = DEFAULT_WIKI_URL;
 

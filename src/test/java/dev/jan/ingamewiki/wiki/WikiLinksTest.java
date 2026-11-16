@@ -69,21 +69,24 @@ class WikiLinksTest {
 	}
 
 	@Test
-	void staticSiteOpensMinecraftWikiArticlesLocally() {
+	void otherWikiArticlesStayOnThatWiki() {
 		WikiLinks matcha = new WikiLinks("https://matchaflavou.red");
-		assertInstanceOf(WikiLinks.Target.External.class, matcha.parse("https://minecraft.wiki/w/Oak_Wood"));
-		matcha.staticSite(true);
-		WikiLinks.Target.Page page = assertInstanceOf(WikiLinks.Target.Page.class, matcha.parse("https://minecraft.wiki/w/Oak_Wood"));
-		assertEquals("Oak Wood", page.title());
+		WikiLinks.Target.Page page = assertInstanceOf(WikiLinks.Target.Page.class, matcha.parse("https://minecraft.wiki/w/Spruce_Wood"));
+		assertEquals("Spruce Wood", page.title());
+		assertEquals("https://minecraft.wiki", page.site());
 		assertNull(page.fragment());
 		page = assertInstanceOf(WikiLinks.Target.Page.class, matcha.parse("https://minecraft.wiki/w/Oak_Wood#History"));
 		assertEquals("Oak Wood", page.title());
 		assertEquals("History", page.fragment());
+		assertEquals("https://minecraft.wiki", page.site());
 		page = assertInstanceOf(WikiLinks.Target.Page.class, matcha.parse("https://de.minecraft.wiki/wiki/Eiche"));
 		assertEquals("Eiche", page.title());
+		assertEquals("https://de.minecraft.wiki", page.site());
 		assertInstanceOf(WikiLinks.Target.External.class, matcha.parse("https://minecraft.wiki/w/Special:RecentChanges"));
 		assertInstanceOf(WikiLinks.Target.External.class, matcha.parse("https://minecraft.wiki/"));
 		assertInstanceOf(WikiLinks.Target.External.class, matcha.parse("https://bugs.mojang.com/browse/MC-1"));
+		assertEquals(URI.create("https://minecraft.wiki/w/Spruce_Wood#History"),
+				new WikiRequest.Page("Spruce Wood", "History", "https://minecraft.wiki").webUrl(matcha));
 	}
 
 	@Test

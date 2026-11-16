@@ -90,12 +90,12 @@ public final class WikiLinks {
 			return null;
 		}
 		if (!sameSite(uri)) {
-			// Static wikis link unchanged vanilla articles at minecraft.wiki. Open that title here instead, so Oak
-			// Wood stays on this wiki (the site redirects /w/Oak_Wood to the section that describes it).
-			String foreign = staticSite ? minecraftArticle(uri) : null;
+			// An article on another wiki (for example a Matcha page linking to minecraft.wiki/w/Spruce_Wood) is
+			// opened from that wiki, still in-game. Anything else stays an external link.
+			ForeignArticle foreign = foreignArticle(uri);
 			if (foreign != null) {
 				String fragment = uri.getRawFragment() == null ? null : normalizeFragment(uri.getRawFragment());
-				return new Target.Page(foreign, fragment);
+				return new Target.Page(foreign.title(), fragment, foreign.site());
 			}
 			return uri.getScheme().startsWith("http") ? new Target.External(uri) : null;
 		}
@@ -160,14 +160,12 @@ public final class WikiLinks {
 	}
 
 	/**
-	 * Title of a minecraft.wiki article URL, or {@code null} when the URL is not one.
+	 * An article URL on a site other than this one: {@code /w/<title>} or {@code /wiki/<title>}.
 	 */
-	private static @Nullable String minecraftArticle(URI uri) {
+	private static @Nullable ForeignArticle foreignArticle(URI uri) {
 		String host = uri.getHost();
-		if (host == null || uri.getScheme() == null || !uri.getScheme().startsWith("http")) {
-			return null;
-		}
-		if (!host.equalsIgnoreCase("minecraft.wiki") && !host.toLowerCase(Locale.ROOT).endsWith(".minecraft.wiki")) {
+		String scheme = uri.getScheme();
+		if (host == null || scheme == null || !scheme.startsWith("http")) {
 			return null;
 		}
 		String path = uri.getRawPath() == null ? "" : uri.getRawPath();
@@ -181,10 +179,24 @@ public final class WikiLinks {
 			return null;
 		}
 		title = title.replace('_', ' ').strip();
-		if (title.regionMatches(true, 0, "Special:", 0, 8)) {
+		if (title.isBlank() || title.regionMatches(true, 0, "Special:", 0, 8)) {
 			return null;
 		}
-		return title;
+		return new ForeignArticle(origin(uri), title);
+	}
+
+	private static String origin(URI uri) {
+		String host = uri.getHost();
+		if (host.indexOf(':') >= 0) {
+			host = "[" + host + "]";
+		}
+		String scheme = uri.getScheme();
+		int port = uri.getPort();
+		boolean defaultPort = port < 0 || (port == 443 && "https".equalsIgnoreCase(scheme)) || (port == 80 && "http".equalsIgnoreCase(scheme));
+		return defaultPort ? scheme + "://" + host : scheme + "://" + host + ":" + port;
+	}
+
+	private record ForeignArticle(String site, String title) {
 	}
 
 	/**
@@ -237,9 +249,13 @@ public final class WikiLinks {
 	 */
 	public sealed interface Target {
 		/**
-		 * A page of the configured wiki.
+		 * An article. {@code site} is {@code null} when the article belongs to this {@link WikiLinks}, and the other
+		 * wiki's base URL when the link points at an article there.
 		 */
-		record Page(String title, @Nullable String fragment) implements Target {
+		record Page(String title, @Nullable String fragment, @Nullable String site) implements Target {
+			public Page(String title, @Nullable String fragment) {
+				this(title, fragment, null);
+			}
 		}
 
 		/**

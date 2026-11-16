@@ -154,6 +154,37 @@ class WikiClientStaticTest {
 	}
 
 	@Test
+	void pageOnReadsAnotherWikiWithoutSwitchingThisOne() throws Exception {
+		HttpServer other = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		other.setExecutor(executor);
+		other.createContext("/api.php", exchange -> {
+			try {
+				send(exchange, 200, "application/json",
+						"{\"parse\":{\"title\":\"Spruce Wood\",\"displaytitle\":\"Spruce Wood\",\"text\":\"<p>A wood type.</p>\"}}");
+			} finally {
+				exchange.close();
+			}
+		});
+		other.start();
+		try {
+			WikiClient client = client();
+			String otherBase = "http://127.0.0.1:" + other.getAddress().getPort();
+			WikiPage spruce = await(client.pageOn(new WikiLinks(otherBase), "Spruce Wood"));
+			assertEquals("Spruce Wood", spruce.title());
+			assertTrue(spruce.html().contains("A wood type."));
+			assertFalse(client.links().staticSite());
+			assertEquals(0, count("/api.php"));
+
+			WikiPage stone = await(client.pageOn(new WikiLinks(base), "Stone"));
+			assertEquals("Stone", stone.title());
+			assertTrue(stone.html().contains("A solid block."));
+			assertFalse(client.links().staticSite());
+		} finally {
+			other.stop(0);
+		}
+	}
+
+	@Test
 	void frontPageReadsTheSiteRoot() throws Exception {
 		WikiClient client = client();
 		ExecutionException missing = assertThrowsExecution(client.page("Minecraft Matcha Wiki"));
