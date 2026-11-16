@@ -209,6 +209,20 @@ public final class WikiClient {
 		});
 	}
 
+	/**
+	 * The site's front page, {@code <wikiUrl>/}. Used when a static wiki has no page with the configured main-page title.
+	 */
+	public CompletableFuture<WikiPage> frontPage() {
+		WikiLinks site = links;
+		URI uri = URI.create(site.base() + "/");
+		return send(uri, "text/html").thenApply(response -> {
+			if (response.statusCode() != 200) {
+				throw new WikiException("HTTP " + response.statusCode());
+			}
+			return StaticPages.parse(response.body(), site.base(), site.title(response.uri()), redirectFragment(response));
+		});
+	}
+
 	private CompletableFuture<WikiPage> staticPage(String title) {
 		WikiLinks site = links;
 		URI uri = site.page(title, null);

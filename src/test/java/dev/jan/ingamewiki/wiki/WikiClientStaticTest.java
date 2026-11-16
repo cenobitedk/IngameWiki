@@ -154,6 +154,16 @@ class WikiClientStaticTest {
 	}
 
 	@Test
+	void frontPageReadsTheSiteRoot() throws Exception {
+		WikiClient client = client();
+		ExecutionException missing = assertThrowsExecution(client.page("Minecraft Matcha Wiki"));
+		assertInstanceOf(WikiException.Missing.class, WikiClient.unwrap(missing.getCause()));
+		WikiPage home = await(client.frontPage());
+		assertEquals("Matcha Flavoured Wiki", home.title());
+		assertTrue(home.html().contains("Welcome."));
+	}
+
+	@Test
 	void searchUsesTheTitleIndexAndLookupOpensTheAlias() throws Exception {
 		WikiClient client = client();
 		int indexBefore = count("/_static/search-titles.json");

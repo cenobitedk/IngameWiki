@@ -90,6 +90,13 @@ public final class WikiLinks {
 			return null;
 		}
 		if (!sameSite(uri)) {
+			// Static wikis link unchanged vanilla articles at minecraft.wiki. Open that title here instead, so Oak
+			// Wood stays on this wiki (the site redirects /w/Oak_Wood to the section that describes it).
+			String foreign = staticSite ? minecraftArticle(uri) : null;
+			if (foreign != null) {
+				String fragment = uri.getRawFragment() == null ? null : normalizeFragment(uri.getRawFragment());
+				return new Target.Page(foreign, fragment);
+			}
 			return uri.getScheme().startsWith("http") ? new Target.External(uri) : null;
 		}
 		String title = title(uri);
@@ -150,6 +157,34 @@ public final class WikiLinks {
 
 	private boolean sameSite(URI uri) {
 		return uri.getHost() != null && uri.getHost().equalsIgnoreCase(baseUri.getHost());
+	}
+
+	/**
+	 * Title of a minecraft.wiki article URL, or {@code null} when the URL is not one.
+	 */
+	private static @Nullable String minecraftArticle(URI uri) {
+		String host = uri.getHost();
+		if (host == null || uri.getScheme() == null || !uri.getScheme().startsWith("http")) {
+			return null;
+		}
+		if (!host.equalsIgnoreCase("minecraft.wiki") && !host.toLowerCase(Locale.ROOT).endsWith(".minecraft.wiki")) {
+			return null;
+		}
+		String path = uri.getRawPath() == null ? "" : uri.getRawPath();
+		String title = null;
+		if (path.startsWith("/w/") && path.length() > 3) {
+			title = decode(path.substring(3));
+		} else if (path.startsWith("/wiki/") && path.length() > 6) {
+			title = decode(path.substring(6));
+		}
+		if (title == null || title.isBlank()) {
+			return null;
+		}
+		title = title.replace('_', ' ').strip();
+		if (title.regionMatches(true, 0, "Special:", 0, 8)) {
+			return null;
+		}
+		return title;
 	}
 
 	/**

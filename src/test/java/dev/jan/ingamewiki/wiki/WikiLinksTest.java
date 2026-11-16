@@ -69,6 +69,24 @@ class WikiLinksTest {
 	}
 
 	@Test
+	void staticSiteOpensMinecraftWikiArticlesLocally() {
+		WikiLinks matcha = new WikiLinks("https://matchaflavou.red");
+		assertInstanceOf(WikiLinks.Target.External.class, matcha.parse("https://minecraft.wiki/w/Oak_Wood"));
+		matcha.staticSite(true);
+		WikiLinks.Target.Page page = assertInstanceOf(WikiLinks.Target.Page.class, matcha.parse("https://minecraft.wiki/w/Oak_Wood"));
+		assertEquals("Oak Wood", page.title());
+		assertNull(page.fragment());
+		page = assertInstanceOf(WikiLinks.Target.Page.class, matcha.parse("https://minecraft.wiki/w/Oak_Wood#History"));
+		assertEquals("Oak Wood", page.title());
+		assertEquals("History", page.fragment());
+		page = assertInstanceOf(WikiLinks.Target.Page.class, matcha.parse("https://de.minecraft.wiki/wiki/Eiche"));
+		assertEquals("Eiche", page.title());
+		assertInstanceOf(WikiLinks.Target.External.class, matcha.parse("https://minecraft.wiki/w/Special:RecentChanges"));
+		assertInstanceOf(WikiLinks.Target.External.class, matcha.parse("https://minecraft.wiki/"));
+		assertInstanceOf(WikiLinks.Target.External.class, matcha.parse("https://bugs.mojang.com/browse/MC-1"));
+	}
+
+	@Test
 	void staticSiteSearchUsesTheSearchPage() {
 		WikiLinks matcha = new WikiLinks("https://matchaflavou.red");
 		assertEquals("https://matchaflavou.red/index.php?title=Special:Search&go=Go&search=Fishing%20Rod",

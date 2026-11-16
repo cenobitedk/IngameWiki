@@ -450,9 +450,18 @@ public final class WikiScreen extends Screen {
 		return switch (request) {
 			case WikiRequest.Page p -> client.page(p.title())
 					.thenApply(result -> article(result, links))
-					.exceptionallyCompose(error -> WikiClient.unwrap(error) instanceof WikiException.Missing
-							? client.search(p.title(), 20).thenApply(results -> searchPage(results, p.title(), links))
-							: CompletableFuture.failedFuture(error));
+					.exceptionallyCompose(error -> {
+						if (!(WikiClient.unwrap(error) instanceof WikiException.Missing)) {
+							return CompletableFuture.failedFuture(error);
+						}
+						boolean home = p.title().equalsIgnoreCase(IngameWiki.config().homePage);
+						return client.search(p.title(), 20).thenCompose(results -> {
+							if (results.hits().isEmpty() && home && links.staticSite()) {
+								return client.frontPage().thenApply(result -> article(result, links));
+							}
+							return CompletableFuture.completedFuture(searchPage(results, p.title(), links));
+						});
+					});
 			case WikiRequest.Lookup l -> client.lookup(l.query())
 					.thenApply(result -> article(result, links))
 					.exceptionallyCompose(error -> WikiClient.unwrap(error) instanceof WikiException.Missing

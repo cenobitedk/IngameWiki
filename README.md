@@ -44,7 +44,7 @@ shown), navigation boxes and anything that needs JavaScript.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `INGAME` | `INGAME`, `BROWSER` or `MCEF` |
-| `wikiUrl` | `https://minecraft.wiki` | A MediaWiki site with the API at `<wikiUrl>/api.php` and pages at `<wikiUrl>/w/<title>`, e.g. `https://de.minecraft.wiki`. A static export of one works too: pages are read from `/w/<title>` and search uses `/_static/search-titles.json` (titles and aliases, not the full text). For [Matcha Flavoured Wiki](https://matchaflavou.red/) set this to `https://matchaflavou.red` and the main page to `Matcha Flavoured Wiki` |
+| `wikiUrl` | `https://minecraft.wiki` | A MediaWiki site with the API at `<wikiUrl>/api.php` and pages at `<wikiUrl>/w/<title>`, e.g. `https://de.minecraft.wiki`. A static export of one works too: pages are read from `/w/<title>` and search uses `/_static/search-titles.json` (titles and aliases, not the full text). For [Matcha Flavoured Wiki](https://matchaflavou.red/) set this to `https://matchaflavou.red`. The main page can stay `Minecraft Wiki`: if that title does not exist, the site's front page is shown. Links to minecraft.wiki articles open on this wiki instead of in the browser |
 | `homePage` | `Minecraft Wiki` | Page opened when nothing is looked up |
 | `showImages` | `true` | Load images in the in-game viewer |
 | `imageScale` | `0.5` | GUI pixels per website pixel for images |
