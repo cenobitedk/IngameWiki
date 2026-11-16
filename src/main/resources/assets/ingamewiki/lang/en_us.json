@@ -5,6 +5,7 @@
 	"key.ingamewiki.cycleMode": "Cycle Wiki Open Mode",
 
 	"ingamewiki.title": "Minecraft Wiki",
+	"ingamewiki.menu.tooltip": "Open the Minecraft Wiki",
 	"ingamewiki.mode.ingame": "In-game",
 	"ingamewiki.mode.browser": "Browser",
 	"ingamewiki.mode.mcef": "MCEF",

@@ -5,6 +5,7 @@ import dev.jan.ingamewiki.config.ModConfig;
 import dev.jan.ingamewiki.config.OpenMode;
 import dev.jan.ingamewiki.config.WikiData;
 import dev.jan.ingamewiki.render.ImageCache;
+import dev.jan.ingamewiki.ui.WikiMenuButton;
 import dev.jan.ingamewiki.wiki.WikiClient;
 import dev.jan.ingamewiki.wiki.WikiLinks;
 import dev.jan.ingamewiki.wiki.WikiRequest;
@@ -66,6 +67,7 @@ public final class IngameWiki implements ClientModInitializer {
 			if (screen instanceof AbstractContainerScreen<?>) {
 				ScreenKeyboardEvents.afterKeyPress(screen).register(IngameWiki::onContainerKey);
 			}
+			WikiMenuButton.add(screen);
 		});
 		ClientCommandRegistrationCallback.EVENT.register(WikiCommands::register);
 	}
