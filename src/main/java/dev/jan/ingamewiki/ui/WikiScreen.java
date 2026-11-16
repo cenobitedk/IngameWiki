@@ -215,8 +215,6 @@ public final class WikiScreen extends Screen {
 		search.setHint(Component.translatable("ingamewiki.search").withStyle(EditBox.SEARCH_HINT_STYLE));
 		if (previous != null) {
 			search.setValue(previous);
-		} else if (page != null) {
-			search.setValue(page.displayTitle());
 		}
 		updateButtons();
 
@@ -437,10 +435,6 @@ public final class WikiScreen extends Screen {
 			}
 		}
 		tocScroll = 0;
-		if (search != null && !search.isFocused()) {
-			search.setValue(loaded.displayTitle());
-			search.moveCursorToStart(false);
-		}
 		updateButtons();
 	}
 
