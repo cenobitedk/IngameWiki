@@ -18,9 +18,14 @@ public sealed interface WikiRequest {
 	URI webUrl(WikiLinks links);
 
 	/**
-	 * A page with a known title.
+	 * A page with a known title. {@code site} is the base URL of another wiki when the article is not on the
+	 * configured one, and {@code null} when it is.
 	 */
-	record Page(String title, @Nullable String fragment) implements WikiRequest {
+	record Page(String title, @Nullable String fragment, @Nullable String site) implements WikiRequest {
+		public Page(String title, @Nullable String fragment) {
+			this(title, fragment, null);
+		}
+
 		@Override
 		public String label() {
 			return title;
@@ -28,7 +33,8 @@ public sealed interface WikiRequest {
 
 		@Override
 		public URI webUrl(WikiLinks links) {
-			return links.page(title, fragment);
+			WikiLinks target = site == null || site.equals(links.base()) ? links : new WikiLinks(site);
+			return target.page(title, fragment);
 		}
 	}
 
